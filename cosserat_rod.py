@@ -1,3 +1,7 @@
+# Vaughn Gzenda
+# 2025
+
+
 import numpy as np
 import matplotlib.pyplot as plt 
 from liegroups import * 
@@ -47,6 +51,7 @@ class Cosserat_Rod:
 
 
     def update_bdf_coefficients(self):
+        """This function updates the BDF2 coeffients"""
         self.c_0 = 1.5 / self.dt
         self.c_1 = -2 / self.dt
         self.c_2 = 0.5 / self.dt
@@ -54,8 +59,7 @@ class Cosserat_Rod:
 
 
     def soft_robot_parameters(self):
-        # Parameters from Samei's MATLAB code
-        # F_0 = [0;0;1;0;0;0] # []         Free Static Strain under no Applied Loads (not used in these matrices)
+        """Parameters for the soft robot"""
         self.rho = 75e1          # [kg/m3]    Density of Material
         self.mu = 5e6           # [N/m^2s]   Viscosity of Peanut Butter
         self.r = 0.01             # [m]        Radius of Cross-Section
@@ -97,22 +101,50 @@ class Cosserat_Rod:
     # ================================================================== Equations of motion
 
     def actuation_wrench(self):
+        """Active actuator stresses (set to zero)
+        Args:
+            None
+        Returns:
+            Lambda_a: Active stress
+        """
         Lambda_a = np.zeros((6,))
         return Lambda_a
 
     def gravity_wrench(self,g_SE,mbM):
-        """Computes the gravity wrench F(s,t)."""
+        """Computes the gravity wrench F(s,t).
+        Args:
+            g_SE0: configuration in SE(3) (4,4)
+            mbM: Mass matrix (6,6)
+        Returns:
+            F_g: Distribued gravity force
+        """
         G = np.array([0, 0, 0, 0, 0, -9.81])
         F_g = mbM@Adjoint_SE3(SE3_inv(g_SE))@G
         return F_g.reshape((6,))
 
     def mcE_rest(self,s):
-        """Rest strain field mcE(s) for the Cosserat rod."""
+        """Rest strain field mcE(s) for the Cosserat rod.
+        Args:
+            s: backbone parameter
+        Returns:
+            mcE_star: rest strain
+        """
         return np.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
     #     return np.array([0.0, 0.0, 0.0,  np.sin(s), 0.0 , 0.0])
 
-
     def constitutive_law(self,s,mcE,Lambda_a,mbK,mbD,mcE_t):
+        """Constitutive law for the stress/strain relation. 
+        Includes linear stiffness and linear damping and active constitutive law
+        Args:
+            s: backbone parameter
+            mcE: strain field (6,)
+            Lambda_a: active stress (6,)
+            mbK: Stiffness (6,6)
+            mbD: Damping matrix (6,6)
+            mcE_t: time variation of the strain (6,)
+        Returns:
+            Lambda: stress field (6,)
+        """
         # rest strain 
         mcE_star = self.mcE_rest(s)
     #     print('Lambda_a',Lambda_a)
@@ -122,6 +154,17 @@ class Cosserat_Rod:
         return Lambda
 
     def get_strain(self, s, Lambda, Lambda_a, mbK, mbD, mcE_h):
+        """Strain relationship from the stress
+        Args:
+            s: backbone parameter
+            Lambda: stress field (6,)
+            Lambda_a: active stress (6,)
+            mbK: Stiffness (6,6)
+            mbD: Damping matrix (6,6)
+            mcE_h: history of the strain (6,)
+        Returns:
+            mcE: strain field (6,)
+        """
         mcE_star = self.mcE_rest(s)
         mat = mbK + self.c_0 * mbD
         rhs = Lambda - Lambda_a + mbK @ mcE_star - mbD @ mcE_h
@@ -130,8 +173,22 @@ class Cosserat_Rod:
 
 
     def semi_discretized_cosserat_equations(self,s, mcE, mcV, mcE_h, mcV_h,mbM,mbK,mbD,F_ext,Lambda_a):
-        """Computes the semi-discretized Cosserat rod equations."""
-
+        """Computes the semi-discretized Cosserat rod equations.
+        Args:
+            s: backbone parameter
+            mcE: strain field (6,)
+            mcV: velocity field (6,)
+            mcE_h: strain field history (6,)
+            mcV_h: velocity field history (6,)
+            mbM: mass matrix (6,6)
+            mbK: Stiffness (6,6)
+            mbD: Damping matrix (6,6)
+            Lambda_a: active stress (6,)
+            F_ext: external distribued forces
+        Returns:
+            mcV_s: velocity vector field (6,)
+            Lambda_s: stress field vector field (6,)
+        """
         mcV_t = self.c_0*mcV + mcV_h  # velocity field at time t
         mcE_t = self.c_0*mcE + mcE_h  # strain field at time t
         # velocity field
@@ -144,7 +201,26 @@ class Cosserat_Rod:
 
 
     def integrate_rod(self,Lambda0, g_SE0, mcV0, mcE_prev, mcE_pprev, mcV_prev,mcV_pprev, s_points,tendon_forces):
-        """Integrates the semi-discretized Cosserat rod equations. in space"""
+        """Integrates the semi-discretized Cosserat rod equations in space.
+        Args:
+            Lambda0: initial stress at (s=0)
+            g_SE0: initial configuration (4,4)
+            mcV0: initial velocity field (6,)
+            mcE_prev: strain field previous (6,)
+            mcE_pprev: strain field previous previous (6,)
+            mcV_prev: velocity field previous (6,)
+            mcV_pprev: velocity field previous previous (6,)
+            mcV_h: velocity field history (6,)
+            s_points: backbone points to integrate at
+            tendon_forces: tendon forces
+        Returns:
+            g_SE: configuration (4,4,N_nodes)
+            mcE: strain (6,N_nodes)
+            mcV: velocity (6,N_nodes)
+            Lambda: stress (6,N_nodes)
+            mcV_prime: velocity (prime) (6,N_nodes)
+            Lambda_prime: stress (prime) (6,N_nodes)        
+        """
         # update the BDF coeffients
         self.update_bdf_coefficients()
         # allocate memory for the states
@@ -248,7 +324,7 @@ class Cosserat_Rod:
                                 s_points, target_Lambda_tip,tendon_forces, Lambda0_initial_guess=None, method='least_squares', verbose=True):
         """
         Solve the Cosserat rod BVP using the shooting method.
-        
+    
         Args:
             g_SE0: Initial configuration in SE(3) (4,4)
             mcV0: Initial velocity field (6,)
@@ -386,6 +462,19 @@ class Cosserat_Rod:
     # ================================================================== Time Integration
 
     def time_integrate_cosserat_rod(self,g_SE0,mcV0,target_Lambda_tip,verbose=False):
+        """Integrate the Cosserat rod dynamics over time (no controls)
+        
+        Args:
+            g_SE0: initial configuration (4,4)
+            mcV0: initial velocity field (6,)
+            target_Lambda_tip: stress field BC (s=L)
+        Returns:
+            g_SE_list: configuration (4,4,N_nodes,N_steps)
+            mcE_list: strain (6,N_nodes,N_steps)
+            mcV_list: velocity (6,N_nodes,N_steps)
+            Lambda_list: stress (6,N_nodes,N_steps)
+            Lambda0_list: stress (6,N_nodes,N_steps)
+        """
         # integrate the rod over time 
         tspan = [self.t0]
         t0 = self.t0
@@ -472,6 +561,20 @@ class Cosserat_Rod:
 
 
     def time_integrate_cosserat_rod_over_controls(self, g_SE0, mcV0, target_Lambda_tip, tendon_forces=None, verbose=False):
+        """Integrate the Cosserat rod dynamics over time (with controls)
+        
+        Args:
+            g_SE0: initial configuration (4,4)
+            mcV0: initial velocity field (6,)
+            target_Lambda_tip: stress field BC (s=L)
+            tendon_forces: function defining the control inputs
+        Returns:
+            g_SE_list: configuration (4,4,N_nodes,N_steps)
+            mcE_list: strain (6,N_nodes,N_steps)
+            mcV_list: velocity (6,N_nodes,N_steps)
+            Lambda_list: stress (6,N_nodes,N_steps)
+            Lambda0_list: stress (6,N_nodes,N_steps)
+        """
         # integrate the rod over time 
         tspan = [self.t0]
         t0 = self.t0

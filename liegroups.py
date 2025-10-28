@@ -1,3 +1,8 @@
+# Vaughn Gzenda
+# 2025
+
+
+
 import numpy as np
 from scipy.linalg import expm, logm
 import matplotlib.pyplot as plt
